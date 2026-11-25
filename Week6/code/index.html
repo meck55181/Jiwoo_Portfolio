@@ -1,0 +1,152 @@
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ml5@0.12.2/dist/ml5.min.js"></script>
+
+<script>
+  let classifier;
+  let video;
+  let label = "";
+  let activeLabel = "";
+  let lastBurstTime = 0;
+
+  let popupImages = {};
+  let popups = [];
+  let currentBurstImages = [];
+  let burstRemaining = 0;
+  let nextPopupTime = 0;
+
+  const modelURL = "https://teachablemachine.withgoogle.com/models/7sawQK0UT/";
+  const CAMERA_W = 800;
+  const CAMERA_H = 600;
+  const BURST_SIZE = 18;
+  const BURST_INTERVAL = 6000;
+  const POPUP_LIFETIME = 7000;
+
+  // Match these keys to the exact labels returned by the model.
+  const imagePaths = {
+    "YaHo": ["yaho.jpg"],
+    "MooYaHo": ["mooyaho.jpeg"],
+    "67": ["67.jpg"]
+  };
+
+  // Load the pose classification model.
+  function preload() {
+    classifier = ml5.imageClassifier(modelURL + "model.json");
+  }
+
+  function setup() {
+    createCanvas(CAMERA_W, CAMERA_H);
+
+    // Start the webcam and classify when the video is ready.
+    video = createCapture(VIDEO);
+    video.size(640, 480);
+    video.hide();
+    video.elt.addEventListener("loadeddata", classifyVideo, { once: true });
+
+    // Load the images for each pose.
+    for (const pose in imagePaths) {
+      popupImages[pose] = [];
+
+      for (const path of imagePaths[pose]) {
+        loadImage(path, imageFile => popupImages[pose].push(imageFile));
+      }
+    }
+  }
+
+  function draw() {
+    clear();
+
+    // Draw the mirrored webcam feed.
+    push();
+    translate(CAMERA_W, 0);
+    scale(-1, 1);
+    image(video, 0, 0, CAMERA_W, CAMERA_H);
+    pop();
+
+    // Add and remove popup images as needed.
+    addNextPopup();
+    popups = popups.filter(
+      popup => millis() - popup.createdAt < POPUP_LIFETIME
+    );
+
+    // Draw the popup images over the webcam feed. Used AI to help code.
+    for (const popup of popups) {
+      push();
+      translate(popup.x + popup.size / 2, popup.y + popup.size / 2);
+      rotate(popup.angle);
+      image(
+        popup.image,
+        -popup.size / 2,
+        -popup.size / 2,
+        popup.size,
+        popup.size
+      );
+      pop();
+    }
+
+    // Display the current classification label.
+    textSize(24);
+    textAlign(LEFT);
+    stroke(0);
+    strokeWeight(4);
+    fill(255);
+    text(label || "Waiting for pose...", 20, 40);
+    noStroke();
+  }
+
+  // Classify webcam frames and start an image burst for the detected pose.
+  function classifyVideo() {
+    const frame = ml5.flipImage(video);
+
+    classifier.classify(frame, (error, results) => {
+      frame.remove();
+
+      if (!error && results && results.length > 0) {
+        label = results[0].label;
+
+        const images = popupImages[label];
+        const hasImages = images && images.length > 0;
+        const poseChanged = label !== activeLabel;
+        const burstReady =
+          lastBurstTime === 0 ||
+          millis() - lastBurstTime > BURST_INTERVAL;
+
+        if (hasImages && (poseChanged || burstReady)) {
+          startBurst(label);
+          lastBurstTime = millis();
+        }
+
+        activeLabel = label;
+      } else if (error) {
+        console.error(error);
+      }
+
+      classifyVideo();
+    });
+  }
+
+  // Prepare a burst using images for the detected pose.
+  function startBurst(pose) {
+    currentBurstImages = popupImages[pose];
+    burstRemaining = BURST_SIZE;
+    nextPopupTime = millis();
+  }
+
+  // Add one randomly selected image at a time.
+  function addNextPopup() {
+    if (burstRemaining <= 0 || millis() < nextPopupTime) return;
+
+    const size = random(60, 120);
+
+    popups.push({
+      image: random(currentBurstImages),
+      x: random(0, CAMERA_W - size),
+      y: random(0, CAMERA_H - size),
+      size: size,
+      angle: random(-0.15, 0.15),
+      createdAt: millis()
+    });
+
+    burstRemaining--;
+    nextPopupTime = millis() + random(60, 140);
+  }
+</script>
